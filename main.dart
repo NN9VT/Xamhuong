@@ -153,15 +153,11 @@ class _GameScreenState extends State<GameScreen> {
     final out = game.playTurn();
     final names =
         out.roll.names.isEmpty ? 'không trúng gì' : out.roll.names.join(' + ');
-    final got = out.award.tiles.entries
-        .where((e) => e.value > 0)
-        .map((e) => '${e.value}× ${e.key.label}')
-        .join(', ');
     setState(() {
       faces = out.roll.dice;
       angles = List.filled(6, 0.0);
       rolling = false;
-      message = '${out.player.name}: $names${got.isEmpty ? '' : '\n→ $got'}';
+      message = '${out.player.name}: $names';
     });
     if (game.gameOver) {
       _endGame();
@@ -269,59 +265,78 @@ class _GameScreenState extends State<GameScreen> {
           padding: const EdgeInsets.all(12),
           child: Column(
             children: [
-              Wrap(
-                spacing: 6,
-                runSpacing: 4,
-                alignment: WrapAlignment.center,
-                children: [
-                  for (final t in Tile.values)
-                    Chip(
-                      label: Text(
-                          '${t.label} (${t.points}đ) ×${game.bank.stock[t]}',
-                          style: const TextStyle(fontSize: 12)),
-                      visualDensity: VisualDensity.compact,
+              GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: Tile.values.length,
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  mainAxisExtent: 36,
+                  mainAxisSpacing: 6,
+                  crossAxisSpacing: 6,
+                ),
+                itemBuilder: (_, i) {
+                  final t = Tile.values[i];
+                  return Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.white24),
+                      borderRadius: BorderRadius.circular(8),
                     ),
-                ],
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        '${t.label} (${t.points}đ) ×${game.bank.stock[t]}',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
+                  );
+                },
               ),
               const SizedBox(height: 12),
               _bowl(),
               const SizedBox(height: 12),
-              Text(message,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 16)),
-              const SizedBox(height: 12),
-              if (paused)
-                const Padding(
-                  padding: EdgeInsets.only(bottom: 8),
-                  child: Text('⏸ Đã tạm dừng',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
+              SizedBox(
+                height: 48,
+                child: Center(
+                  child: Text(
+                    message,
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 16),
+                  ),
                 ),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  FilledButton(
-                    onPressed: myTurn ? _takeTurn : null,
-                    child: const Padding(
-                      padding:
-                          EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-                      child: Text('Gieo', style: TextStyle(fontSize: 20)),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  OutlinedButton.icon(
-                    onPressed: game.gameOver ? null : _togglePause,
-                    icon: Icon(paused ? Icons.play_arrow : Icons.pause),
-                    label: Text(paused ? 'Tiếp tục' : 'Tạm dừng'),
-                  ),
-                ],
               ),
-              if (myTurn && game.canDiscount) ...[
-                const SizedBox(height: 8),
-                OutlinedButton(
-                  onPressed: _discount,
-                  child: const Text('Giảm giá thẻ cuối'),
+              const SizedBox(height: 12),
+              FilledButton(
+                onPressed: myTurn ? _takeTurn : null,
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 40, vertical: 10),
+                  child: Text('Gieo', style: TextStyle(fontSize: 22)),
                 ),
-              ],
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: game.gameOver ? null : _togglePause,
+                style: OutlinedButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  textStyle: const TextStyle(fontSize: 13),
+                ),
+                icon: Icon(paused ? Icons.play_arrow : Icons.pause, size: 18),
+                label: Text(paused ? 'Tiếp tục' : 'Tạm dừng'),
+              ),
+              SizedBox(
+                height: 48,
+                child: Center(
+                  child: myTurn && game.canDiscount
+                      ? OutlinedButton(
+                          onPressed: _discount,
+                          child: const Text('Giảm giá thẻ cuối'),
+                        )
+                      : null,
+                ),
+              ),
               const SizedBox(height: 12),
               for (final p in game.players)
                 Card(
