@@ -69,7 +69,7 @@ RollResult evaluateRoll(List<int> dice) {
     return result(['Ngũ Hường'], [Tile.trangAnh, Tile.trangEm, Tile.trangEm]);
   }
   if (fours == 4) {
-    return result(['Bốn mặt 4'], [Tile.trangAnh]);
+    return result(['Tứ Hường'], [Tile.trangAnh]);
   }
   if (fours == 3) {
     if (dice.where((d) => d != 4).toSet().length == 1) {
