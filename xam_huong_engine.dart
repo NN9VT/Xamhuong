@@ -50,8 +50,9 @@ RollResult evaluateRoll(List<int> dice) {
     c[d]++;
   }
   final fours = c[4];
-  final names = <String>[];
-  final tiles = <Tile>[];
+
+  RollResult result(List<String> names, List<Tile> tiles) =>
+      RollResult(dice, names, tiles);
 
   // Instant wins
   if (fours == 6) {
@@ -63,71 +64,58 @@ RollResult evaluateRoll(List<int> dice) {
     }
   }
 
-  // Red 4s
-  if (fours == 1) {
-    names.add('Nhất Hường');
-    tiles.add(Tile.nhatHuong);
-  } else if (fours == 2) {
-    names.add('Nhị Hường');
-    tiles.add(Tile.nhiHuong);
-  } else if (fours == 3) {
-    names.add('Tam Hường');
-    tiles.add(Tile.tamHuong);
+  // Many red 4s
+  if (fours == 5) {
+    return result(['Ngũ Hường'], [Tile.trangAnh, Tile.trangEm, Tile.trangEm]);
+  }
+  if (fours == 4) {
+    return result(['Bốn mặt 4'], [Tile.trangAnh]);
+  }
+  if (fours == 3) {
     if (dice.where((d) => d != 4).toSet().length == 1) {
-      names.add('Tam Hường Phân Song');
-      tiles.add(Tile.trangEm);
+      return result(['Tam Hường Phân Song'], [Tile.tamHuong, Tile.trangEm]);
     }
-  } else if (fours == 4) {
-    names.add('Bốn mặt 4');
-    tiles.add(Tile.trangAnh);
-  } else if (fours == 5) {
-    names.add('Ngũ Hường');
-    tiles.addAll([Tile.trangAnh, Tile.trangEm, Tile.trangEm]);
+    return result(['Tam Hường'], [Tile.tamHuong]);
   }
 
   // Same faces (not 4)
   for (var f = 1; f <= 6; f++) {
     if (f == 4) continue;
     if (c[f] == 5) {
-      names.add('Ngũ Tử');
-      tiles.add(Tile.trangAnh);
-    } else if (c[f] == 4) {
-      names.add('Tứ Tự');
-      tiles.add(Tile.tuTu);
+      return result(['Ngũ Tử'], [Tile.trangAnh]);
+    }
+    if (c[f] == 4) {
       final rest = dice.where((d) => d != f).toList();
       if (rest[0] + rest[1] == f) {
+        // Tứ Tự Cáp replaces the Tứ Tự tile and gives nothing else.
         if (rest[0] == rest[1]) {
-          names.add('Tứ Tự Cáp Chính');
-          tiles.addAll([Tile.trangEm, Tile.tamHuong]);
-        } else {
-          names.add('Tứ Tự Cáp Xiên');
-          tiles.add(Tile.trangEm);
+          return result(['Tứ Tự Cáp Chính'], [Tile.trangEm, Tile.tamHuong]);
         }
+        return result(['Tứ Tự Cáp Xiên'], [Tile.trangEm]);
       }
+      return result(
+        ['Tứ Tự', if (fours == 1) 'Nhất Hường', if (fours == 2) 'Nhị Hường'],
+        [
+          Tile.tuTu,
+          if (fours == 1) Tile.nhatHuong,
+          if (fours == 2) Tile.nhiHuong,
+        ],
+      );
     }
   }
 
-  // Patterns
+  // Patterns: each gives only 1 Trạng em, no extra Hường tiles.
   bool every(List<int> faces, int n) => faces.every((f) => c[f] == n);
   final triples = [for (var f = 1; f <= 6; f++) if (c[f] == 3) f];
-  if (triples.length == 2 && fours != 3) {
-    names.add('Phân Song');
-    tiles.add(Tile.trangEm);
-  }
-  if (every([1, 2, 3], 2)) {
-    names.add('Nhất Nhì Xa');
-    tiles.add(Tile.trangEm);
-  }
-  if (every([4, 5, 6], 2)) {
-    names.add('Tứ Ngũ Lục');
-    tiles.add(Tile.trangEm);
-  }
-  if (every([1, 2, 3, 4, 5, 6], 1)) {
-    names.add('Suốt');
-    tiles.add(Tile.trangEm);
-  }
+  if (triples.length == 2) return result(['Phân Song'], [Tile.trangEm]);
+  if (every([1, 2, 3], 2)) return result(['Nhất Nhì Xa'], [Tile.trangEm]);
+  if (every([4, 5, 6], 2)) return result(['Tứ Ngũ Lục'], [Tile.trangEm]);
+  if (every([1, 2, 3, 4, 5, 6], 1)) return result(['Suốt'], [Tile.trangEm]);
 
-  return RollResult(dice, names, tiles);
+  // Plain red 4s
+  if (fours == 1) return result(['Nhất Hường'], [Tile.nhatHuong]);
+  if (fours == 2) return result(['Nhị Hường'], [Tile.nhiHuong]);
+  return result([], []);
 }
 
 class Award {

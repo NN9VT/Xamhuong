@@ -100,6 +100,7 @@ class _GameScreenState extends State<GameScreen> {
   List<int> faces = [1, 2, 3, 4, 5, 6];
   List<double> angles = List.filled(6, 0.0);
   bool rolling = false;
+  bool paused = false;
   String message = '';
 
   @override
@@ -125,6 +126,7 @@ class _GameScreenState extends State<GameScreen> {
     faces = [1, 2, 3, 4, 5, 6];
     angles = List.filled(6, 0.0);
     rolling = false;
+    paused = false;
     message = 'Tới lượt bạn, bấm Gieo!';
   }
 
@@ -166,8 +168,16 @@ class _GameScreenState extends State<GameScreen> {
       return;
     }
     if (game.currentPlayer.isBot) {
+      if (paused) return;
       await Future.delayed(const Duration(milliseconds: 1500));
-      if (mounted) _takeTurn();
+      if (mounted && !paused) _takeTurn();
+    }
+  }
+
+  void _togglePause() {
+    setState(() => paused = !paused);
+    if (!paused && !rolling && !game.gameOver && game.currentPlayer.isBot) {
+      _takeTurn();
     }
   }
 
@@ -280,12 +290,30 @@ class _GameScreenState extends State<GameScreen> {
                   textAlign: TextAlign.center,
                   style: const TextStyle(fontSize: 16)),
               const SizedBox(height: 12),
-              FilledButton(
-                onPressed: myTurn ? _takeTurn : null,
-                child: const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 32, vertical: 8),
-                  child: Text('Gieo', style: TextStyle(fontSize: 20)),
+              if (paused)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 8),
+                  child: Text('⏸ Đã tạm dừng',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
                 ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  FilledButton(
+                    onPressed: myTurn ? _takeTurn : null,
+                    child: const Padding(
+                      padding:
+                          EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                      child: Text('Gieo', style: TextStyle(fontSize: 20)),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  OutlinedButton.icon(
+                    onPressed: game.gameOver ? null : _togglePause,
+                    icon: Icon(paused ? Icons.play_arrow : Icons.pause),
+                    label: Text(paused ? 'Tiếp tục' : 'Tạm dừng'),
+                  ),
+                ],
               ),
               if (myTurn && game.canDiscount) ...[
                 const SizedBox(height: 8),
