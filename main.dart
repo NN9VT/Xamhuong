@@ -302,6 +302,7 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   void _showResult() {
+    final ranked = [...game.players]..sort((a, b) => b.score.compareTo(a.score));
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
@@ -310,7 +311,7 @@ class _GameScreenState extends State<GameScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            for (final p in game.players)
+            for (final p in ranked)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 2),
                 child: Text('${p.name}: ${p.score} điểm',
@@ -323,13 +324,6 @@ class _GameScreenState extends State<GameScreen> {
             onPressed: () => Navigator.pop(context),
             child: const Text('Đóng'),
           ),
-          FilledButton(
-            onPressed: () {
-              Navigator.pop(context);
-              setState(_newGame);
-            },
-            child: const Text('Chơi lại'),
-          ),
         ],
       ),
     );
@@ -338,7 +332,7 @@ class _GameScreenState extends State<GameScreen> {
   String _tilesText(Map<Tile, int> m) {
     final s = m.entries
         .where((e) => e.value > 0)
-        .map((e) => '${e.value}× ${e.key.label}')
+        .map((e) => '${e.value}× ${_bankNames[e.key]}')
         .join(', ');
     return s.isEmpty ? 'Chưa có thẻ' : s;
   }
@@ -370,12 +364,13 @@ class _GameScreenState extends State<GameScreen> {
           // Giảm giá: Trạng Nguyên gets a slightly lighter background.
           final tint = (t == Tile.trangAnh && shownDiscount > 0)
               ? const Color(0x24FFFFFF)
-              : null;
+              : Colors.transparent;
+          final bg = Theme.of(context).scaffoldBackgroundColor;
           return AnimatedContainer(
             duration: const Duration(milliseconds: 250),
             padding: const EdgeInsets.symmetric(horizontal: 8),
             decoration: BoxDecoration(
-              color: tint,
+              color: Color.alphaBlend(tint, bg), // opaque: glow stays on the border
               border: Border.all(
                 color: glow ? Colors.white : Colors.white24,
                 width: glow ? 3 : 1,
