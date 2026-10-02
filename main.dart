@@ -116,9 +116,6 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 }
 
-/// Special look for the result line.
-enum MsgFx { none, pink, silver, bigPink }
-
 class GameScreen extends StatefulWidget {
   final List<String> botNames;
   const GameScreen({super.key, required this.botNames});
@@ -143,7 +140,7 @@ class _GameScreenState extends State<GameScreen> {
   int shownCurrent = 0;
   int shownDiscount = 0;
   int shownTrangIdx = -1;
-  String shownTrangText = '';
+  String shownTrangLabel = '';
   Set<Tile> glowing = {};
 
   List<int> faces = [1, 2, 3, 4, 5, 6];
@@ -151,7 +148,7 @@ class _GameScreenState extends State<GameScreen> {
   bool rolling = false; // true during the whole turn (roll, pause, glow)
   bool paused = false;
   String message = '';
-  MsgFx fx = MsgFx.none;
+  Set<int> glowingPlayers = {};
 
   @override
   void initState() {
@@ -180,7 +177,7 @@ class _GameScreenState extends State<GameScreen> {
     angles = List.filled(6, 0.0);
     rolling = false;
     paused = false;
-    fx = MsgFx.none;
+    glowingPlayers = {};
     message = 'Tới lượt bạn, bấm Gieo!';
   }
 
@@ -192,9 +189,7 @@ class _GameScreenState extends State<GameScreen> {
     final holder = game.trangHolder;
     final info = game.trangInfo;
     shownTrangIdx = holder == null ? -1 : game.players.indexOf(holder);
-    shownTrangText = (holder == null || info == null)
-        ? ''
-        : 'Trạng ${info.kind == TrangKind.red ? 'đỏ' : 'đen'}: ${info.label}';
+    shownTrangLabel = (holder == null || info == null) ? '' : info.label;
   }
 
   Future<void> _wait(int ms) => Future.delayed(Duration(milliseconds: ms));
@@ -204,17 +199,23 @@ class _GameScreenState extends State<GameScreen> {
     p.play(AssetSource('sounds/clink.wav'));
   }
 
-  MsgFx _fxFor(List<String> names) {
-    for (final n in names) {
-      if (n.startsWith('Lục Phú Hường')) return MsgFx.bigPink;
-      if (n.startsWith('Lục Phú') ||
-          n.startsWith('Tứ Hường') ||
-          n.startsWith('Ngũ Hường')) {
-        return MsgFx.pink;
-      }
-      if (n.startsWith('Ngũ Tử')) return MsgFx.silver;
+  /// Line 1: combo, line 2: Trạng Nguyên + tuổi, line 3: who was robbed.
+  String _resultMessage(TurnOutcome out) {
+    final r = out.roll;
+    if (r.names.isEmpty) return '${out.player.name}: không trúng gì';
+    final lines = ['${out.player.name}: ${r.names.join(' + ')}'];
+    final tr = r.trang;
+    if (tr != null) {
+      lines.add('Trạng Nguyên${tr.age == null ? '' : ' ${tr.age} tuổi'}');
+    } else if (r.winEverything || r.winAllRemaining) {
+      lines.add('Lấy hết thẻ của người chơi khác');
     }
-    return MsgFx.none;
+    if (out.victims.isNotEmpty) {
+      final who = out.victims.map((v) => v.name).join(', ');
+      lines.add('${out.player.name} cướp trạng của $who');
+    }
+    if (out.note != null) lines.add(out.note!);
+    return lines.join('\n');
   }
 
   Future<void> _takeTurn() async {
@@ -223,7 +224,6 @@ class _GameScreenState extends State<GameScreen> {
     setState(() {
       rolling = true;
       shownCurrent = game.current;
-      fx = MsgFx.none;
       message = '${player.name} đang gieo...';
     });
 
@@ -239,16 +239,15 @@ class _GameScreenState extends State<GameScreen> {
     }
 
     final out = game.playTurn();
-    final names =
-        out.roll.names.isEmpty ? 'không trúng gì' : out.roll.names.join(' + ');
-    final special = _fxFor(out.roll.names);
+    // Pause for the Trạng results (Tứ Hường, Ngũ Hường, Ngũ Tử, Lục Phú...).
+    final special = out.roll.trang != null ||
+        out.roll.winEverything ||
+        out.roll.winAllRemaining;
     final big = out.award.points > 16 || out.stolenPoints > 16;
     setState(() {
       faces = out.roll.dice;
       angles = List.filled(6, 0.0);
-      fx = special;
-      message =
-          '${out.player.name}: $names${out.note == null ? '' : '\n${out.note}'}';
+      message = _resultMessage(out);
     });
 
     // Let everyone read the result (longer for big results).
@@ -261,11 +260,15 @@ class _GameScreenState extends State<GameScreen> {
         for (final e in out.award.tiles.entries)
           if (e.value > 0) e.key,
       };
+      glowingPlayers = {
+        for (final v in out.victims) game.players.indexOf(v),
+      };
     });
     await _wait(1000);
     if (!mounted) return;
     setState(() {
       glowing = {};
+      glowingPlayers = {};
       _syncShown();
     });
     await _wait(500);
@@ -274,7 +277,7 @@ class _GameScreenState extends State<GameScreen> {
     setState(() {
       rolling = false;
       shownCurrent = game.current;
-      if (special != MsgFx.none) paused = true; // wait for Tiếp tục
+      if (special) paused = true; // wait for Tiếp tục
     });
 
     if (game.gameOver) {
@@ -329,11 +332,13 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
-  String _tilesText(Map<Tile, int> m) {
-    final s = m.entries
-        .where((e) => e.value > 0)
-        .map((e) => '${e.value}× ${_bankNames[e.key]}')
-        .join(', ');
+  String _tilesText(Map<Tile, int> m, String trangLabel) {
+    final s = m.entries.where((e) => e.value > 0).map((e) {
+      final extra = (e.key == Tile.trangAnh && trangLabel.isNotEmpty)
+          ? ' ($trangLabel)'
+          : '';
+      return '${e.value}x ${_bankNames[e.key]}$extra';
+    }).join(', ');
     return s.isEmpty ? 'Chưa có thẻ' : s;
   }
 
@@ -394,6 +399,46 @@ class _GameScreenState extends State<GameScreen> {
         },
       );
 
+  Widget _playerCard(int i) {
+    final glow = glowingPlayers.contains(i);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 250),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: glow
+              ? const [
+                  BoxShadow(
+                      color: Colors.white70, blurRadius: 12, spreadRadius: 2)
+                ]
+              : const [],
+        ),
+        child: Card(
+          margin: EdgeInsets.zero,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(
+              color: glow ? Colors.white : Colors.transparent,
+              width: 3,
+            ),
+          ),
+          color: i == shownCurrent && !game.gameOver
+              ? Theme.of(context).colorScheme.primaryContainer
+              : null,
+          child: ListTile(
+            dense: true,
+            title: Text(game.players[i].name),
+            subtitle: Text(_tilesText(
+                shownTiles[i], i == shownTrangIdx ? shownTrangLabel : '')),
+            trailing: Text('${shownScores[i]} điểm',
+                style: const TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _bowl() => Container(
         width: 270,
         height: 270,
@@ -420,43 +465,18 @@ class _GameScreenState extends State<GameScreen> {
         ),
       );
 
-  Widget _messageBox() {
-    Color? stroke;
-    if (fx == MsgFx.pink || fx == MsgFx.bigPink) {
-      stroke = const Color(0xFFFF4081); // pink
-    }
-    if (fx == MsgFx.silver) stroke = const Color(0xFFC0C0C0); // silver
-    final base = TextStyle(
-      fontSize: fx == MsgFx.bigPink ? 23 : 16,
-      fontWeight: stroke == null ? FontWeight.normal : FontWeight.bold,
-    );
-    Text line(TextStyle style) => Text(
-          message,
-          textAlign: TextAlign.center,
-          maxLines: 3,
-          overflow: TextOverflow.ellipsis,
-          style: style,
-        );
-    return SizedBox(
-      height: 76,
-      child: Center(
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            if (stroke != null)
-              line(base.copyWith(
-                foreground: Paint()
-                  ..style = PaintingStyle.stroke
-                  ..strokeWidth = 5
-                  ..strokeJoin = StrokeJoin.round
-                  ..color = stroke,
-              )),
-            line(base.copyWith(color: Colors.white)),
-          ],
+  Widget _messageBox() => SizedBox(
+        height: 84,
+        child: Center(
+          child: Text(
+            message,
+            textAlign: TextAlign.center,
+            maxLines: 4,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 16),
+          ),
         ),
-      ),
-    );
-  }
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -504,27 +524,7 @@ class _GameScreenState extends State<GameScreen> {
               ),
               const SizedBox(height: 16),
               for (var i = 0; i < game.players.length; i++)
-                Card(
-                  color: i == shownCurrent && !game.gameOver
-                      ? Theme.of(context).colorScheme.primaryContainer
-                      : null,
-                  child: ListTile(
-                    dense: true,
-                    title: Text(game.players[i].name),
-                    subtitle: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (i == shownTrangIdx && shownTrangText.isNotEmpty)
-                          Text(shownTrangText,
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.bold)),
-                        Text(_tilesText(shownTiles[i])),
-                      ],
-                    ),
-                    trailing: Text('${shownScores[i]} điểm',
-                        style: const TextStyle(fontWeight: FontWeight.bold)),
-                  ),
-                ),
+                _playerCard(i),
             ],
           ),
         ),

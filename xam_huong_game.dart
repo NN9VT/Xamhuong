@@ -35,10 +35,11 @@ class TurnOutcome {
   final Player player;
   final RollResult roll;
   final Award award;
-  final String? note; // steal / Giảm giá info for the UI
+  final List<Player> victims; // players who lost a Trạng this turn
+  final String? note; // Giảm giá info for the UI
   final int stolenPoints;
   const TurnOutcome(this.player, this.roll, this.award,
-      {this.note, this.stolenPoints = 0});
+      {this.victims = const [], this.note, this.stolenPoints = 0});
 }
 
 class XamHuongGame {
@@ -77,6 +78,7 @@ class XamHuongGame {
     final roll = evaluateRoll(rollDice(_rng));
     var award = const Award({}, false);
     final notes = <String>[];
+    final victims = <Player>[];
     var stolenPoints = 0;
 
     if (roll.winEverything || roll.winAllRemaining) {
@@ -89,7 +91,6 @@ class XamHuongGame {
       if (roll.winEverything) p.fixedScore = 382;
       trangHolder = p;
       trangInfo = null;
-      notes.add('Lấy hết thẻ của mọi người chơi khác!');
     } else if (roll.tiles.isNotEmpty) {
       final wanted = List<Tile>.of(roll.tiles);
 
@@ -126,7 +127,7 @@ class XamHuongGame {
         trangInfo = tr;
         wanted.remove(Tile.trangAnh);
         stolenPoints += Tile.trangAnh.points;
-        notes.add('Cướp Trạng của ${holder.name}!');
+        if (!victims.contains(holder)) victims.add(holder);
       }
 
       // Ngũ Hường also takes missing Bảng Nhãn from other players.
@@ -139,7 +140,7 @@ class XamHuongGame {
             p.tiles[Tile.trangEm] = p.tiles[Tile.trangEm]! + 1;
             wanted.remove(Tile.trangEm);
             stolenPoints += Tile.trangEm.points;
-            notes.add('Cướp Bảng Nhãn của ${other.name}!');
+            if (!victims.contains(other)) victims.add(other);
             missing--;
           }
         }
@@ -172,6 +173,7 @@ class XamHuongGame {
       p,
       roll,
       award,
+      victims: victims,
       note: notes.isEmpty ? null : notes.join('\n'),
       stolenPoints: stolenPoints,
     );

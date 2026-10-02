@@ -24,8 +24,12 @@ enum TrangKind { red, black }
 class Trang {
   final TrangKind kind;
   final int rank;
-  final String label;
-  const Trang(this.kind, this.rank, this.label);
+  final String title; // e.g. "Tứ Hường", "Ngũ Hường Đại Ấn"
+  final int? age; // null for Cáp Chính, Cáp Xiên and Đại Ấn
+  const Trang(this.kind, this.rank, this.title, [this.age]);
+
+  /// e.g. "Tứ Hường 3 tuổi" or "Tứ Hường Cáp Chính"
+  String get label => age == null ? title : '$title $age tuổi';
 
   /// Ngũ Hường (rank 100+) can steal from red and black alike.
   bool get beatsAnyColor => rank >= 100;
@@ -88,11 +92,12 @@ RollResult evaluateRoll(List<int> dice) {
   if (fours == 5) {
     final other = dice.firstWhere((d) => d != 4);
     final daiAn = other == 1;
-    final name = daiAn ? 'Ngũ Hường Đại Ấn' : 'Ngũ Hường $other tuổi';
+    final title = daiAn ? 'Ngũ Hường Đại Ấn' : 'Ngũ Hường';
     return result(
-      [name],
+      [title],
       [Tile.trangAnh, Tile.trangEm, Tile.trangEm],
-      trang: Trang(TrangKind.red, 100 + (daiAn ? 7 : other), name),
+      trang: Trang(
+          TrangKind.red, 100 + (daiAn ? 7 : other), title, daiAn ? null : other),
       stealsTrangEm: true,
     );
   }
@@ -101,20 +106,22 @@ RollResult evaluateRoll(List<int> dice) {
   if (fours == 4) {
     final rest = dice.where((d) => d != 4).toList();
     final sum = rest[0] + rest[1];
-    String name;
+    String title;
     int rank;
+    int? age;
     if (rest[0] == 2 && rest[1] == 2) {
-      name = 'Tứ Hường Cáp Chính';
+      title = 'Tứ Hường Cáp Chính';
       rank = 30;
     } else if (sum == 4) {
-      name = 'Tứ Hường Cáp Xiên';
+      title = 'Tứ Hường Cáp Xiên';
       rank = 20;
     } else {
-      name = 'Tứ Hường $sum tuổi';
+      title = 'Tứ Hường';
       rank = sum;
+      age = sum;
     }
-    return result([name], [Tile.trangAnh],
-        trang: Trang(TrangKind.red, rank, name));
+    return result([title], [Tile.trangAnh],
+        trang: Trang(TrangKind.red, rank, title, age));
   }
 
   if (fours == 3) {
@@ -130,9 +137,10 @@ RollResult evaluateRoll(List<int> dice) {
     if (c[f] == 5) {
       final other = dice.firstWhere((d) => d != f);
       final daiAn = other == 4;
-      final name = daiAn ? 'Ngũ Tử Đại Ấn' : 'Ngũ Tử $other tuổi';
-      return result([name], [Tile.trangAnh],
-          trang: Trang(TrangKind.black, daiAn ? 7 : other, name));
+      final title = daiAn ? 'Ngũ Tử Đại Ấn' : 'Ngũ Tử';
+      return result([title], [Tile.trangAnh],
+          trang: Trang(
+              TrangKind.black, daiAn ? 7 : other, title, daiAn ? null : other));
     }
     if (c[f] == 4) {
       final rest = dice.where((d) => d != f).toList();
