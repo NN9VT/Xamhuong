@@ -34,14 +34,25 @@ class SetupScreen extends StatefulWidget {
 }
 
 class _SetupScreenState extends State<SetupScreen> {
-  double bots = 3;
+  double bots = 3; // 1 to 7 bots = 2 to 8 players
+  final _names =
+      List.generate(7, (i) => TextEditingController(text: 'Bot ${i + 1}'));
+
+  @override
+  void dispose() {
+    for (final c in _names) {
+      c.dispose();
+    }
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final n = bots.round();
     return Scaffold(
       body: SafeArea(
         child: Center(
-          child: Padding(
+          child: SingleChildScrollView(
             padding: const EdgeInsets.all(24),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -51,23 +62,46 @@ class _SetupScreenState extends State<SetupScreen> {
                         TextStyle(fontSize: 40, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 8),
                 const Text('Trò chơi dân gian gieo 6 xí ngầu'),
-                const SizedBox(height: 32),
-                Text('Số bot: ${bots.round()} (tổng ${bots.round() + 1} người chơi)'),
+                const SizedBox(height: 24),
+                Text('Số bot: $n (tổng ${n + 1} người chơi)'),
                 Slider(
                   value: bots,
                   min: 1,
-                  max: 11,
-                  divisions: 10,
-                  label: '${bots.round()}',
+                  max: 7,
+                  divisions: 6,
+                  label: '$n',
                   onChanged: (v) => setState(() => bots = v),
                 ),
-                const SizedBox(height: 16),
-                FilledButton(
-                  onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => GameScreen(bots: bots.round()),
+                const SizedBox(height: 8),
+                for (var i = 0; i < n; i++)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: TextField(
+                      controller: _names[i],
+                      maxLength: 12,
+                      decoration: InputDecoration(
+                        labelText: 'Tên bot ${i + 1}',
+                        isDense: true,
+                        counterText: '',
+                        border: const OutlineInputBorder(),
+                      ),
                     ),
                   ),
+                const SizedBox(height: 8),
+                FilledButton(
+                  onPressed: () {
+                    final names = [
+                      for (var i = 0; i < n; i++)
+                        _names[i].text.trim().isEmpty
+                            ? 'Bot ${i + 1}'
+                            : _names[i].text.trim(),
+                    ];
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => GameScreen(botNames: names),
+                      ),
+                    );
+                  },
                   child: const Padding(
                     padding: EdgeInsets.symmetric(horizontal: 24, vertical: 8),
                     child: Text('Bắt đầu chơi', style: TextStyle(fontSize: 18)),
@@ -82,9 +116,12 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 }
 
+/// Special look for the result line.
+enum MsgFx { none, pink, silver, bigPink }
+
 class GameScreen extends StatefulWidget {
-  final int bots;
-  const GameScreen({super.key, required this.bots});
+  final List<String> botNames;
+  const GameScreen({super.key, required this.botNames});
 
   @override
   State<GameScreen> createState() => _GameScreenState();
@@ -97,11 +134,24 @@ class _GameScreenState extends State<GameScreen> {
   int _clinkIdx = 0;
 
   late XamHuongGame game;
+
+  // What the screen shows. It lags behind `game` during a turn so the tiles
+  // can light up on the table before they move to the player.
+  late Map<Tile, int> shownStock;
+  late List<Map<Tile, int>> shownTiles;
+  late List<int> shownScores;
+  int shownCurrent = 0;
+  int shownDiscount = 0;
+  int shownTrangIdx = -1;
+  String shownTrangText = '';
+  Set<Tile> glowing = {};
+
   List<int> faces = [1, 2, 3, 4, 5, 6];
   List<double> angles = List.filled(6, 0.0);
-  bool rolling = false;
+  bool rolling = false; // true during the whole turn (roll, pause, glow)
   bool paused = false;
   String message = '';
+  MsgFx fx = MsgFx.none;
 
   @override
   void initState() {
@@ -121,52 +171,118 @@ class _GameScreenState extends State<GameScreen> {
   void _newGame() {
     game = XamHuongGame([
       Player('Bạn'),
-      for (var i = 1; i <= widget.bots; i++) Player('Bot $i', isBot: true),
+      for (final name in widget.botNames) Player(name, isBot: true),
     ]);
+    _syncShown();
+    shownCurrent = game.current;
+    glowing = {};
     faces = [1, 2, 3, 4, 5, 6];
     angles = List.filled(6, 0.0);
     rolling = false;
     paused = false;
+    fx = MsgFx.none;
     message = 'Tới lượt bạn, bấm Gieo!';
   }
+
+  void _syncShown() {
+    shownStock = Map.of(game.bank.stock);
+    shownTiles = [for (final p in game.players) Map.of(p.tiles)];
+    shownScores = [for (final p in game.players) p.score];
+    shownDiscount = game.discountStage;
+    final holder = game.trangHolder;
+    final info = game.trangInfo;
+    shownTrangIdx = holder == null ? -1 : game.players.indexOf(holder);
+    shownTrangText = (holder == null || info == null)
+        ? ''
+        : 'Trạng ${info.kind == TrangKind.red ? 'đỏ' : 'đen'}: ${info.label}';
+  }
+
+  Future<void> _wait(int ms) => Future.delayed(Duration(milliseconds: ms));
 
   void _clink() {
     final p = _clinks[_clinkIdx++ % _clinks.length];
     p.play(AssetSource('sounds/clink.wav'));
   }
 
+  MsgFx _fxFor(List<String> names) {
+    for (final n in names) {
+      if (n.startsWith('Lục Phú Hường')) return MsgFx.bigPink;
+      if (n.startsWith('Lục Phú') ||
+          n.startsWith('Tứ Hường') ||
+          n.startsWith('Ngũ Hường')) {
+        return MsgFx.pink;
+      }
+      if (n.startsWith('Ngũ Tử')) return MsgFx.silver;
+    }
+    return MsgFx.none;
+  }
+
   Future<void> _takeTurn() async {
     if (rolling || game.gameOver) return;
+    final player = game.currentPlayer;
     setState(() {
       rolling = true;
-      message = '${game.currentPlayer.name} đang gieo...';
+      shownCurrent = game.current;
+      fx = MsgFx.none;
+      message = '${player.name} đang gieo...';
     });
-    for (var i = 0; i < 9; i++) {
+
+    // Rolling animation, about 1.5 seconds.
+    for (var i = 0; i < 12; i++) {
       _clink();
       setState(() {
         faces = List.generate(6, (_) => _rng.nextInt(6) + 1);
         angles = List.generate(6, (_) => (_rng.nextDouble() - 0.5) * 1.2);
       });
-      await Future.delayed(const Duration(milliseconds: 130));
+      await _wait(122);
       if (!mounted) return;
     }
+
     final out = game.playTurn();
     final names =
         out.roll.names.isEmpty ? 'không trúng gì' : out.roll.names.join(' + ');
+    final special = _fxFor(out.roll.names);
+    final big = out.award.points > 16 || out.stolenPoints > 16;
     setState(() {
       faces = out.roll.dice;
       angles = List.filled(6, 0.0);
-      rolling = false;
-      message = '${out.player.name}: $names';
+      fx = special;
+      message =
+          '${out.player.name}: $names${out.note == null ? '' : '\n${out.note}'}';
     });
+
+    // Let everyone read the result (longer for big results).
+    await _wait(big ? 3000 : 2000);
+    if (!mounted) return;
+
+    // Light up the tiles taken from the table, then give them to the player.
+    setState(() {
+      glowing = {
+        for (final e in out.award.tiles.entries)
+          if (e.value > 0) e.key,
+      };
+    });
+    await _wait(1000);
+    if (!mounted) return;
+    setState(() {
+      glowing = {};
+      _syncShown();
+    });
+    await _wait(500);
+    if (!mounted) return;
+
+    setState(() {
+      rolling = false;
+      shownCurrent = game.current;
+      if (special != MsgFx.none) paused = true; // wait for Tiếp tục
+    });
+
     if (game.gameOver) {
       _endGame();
       return;
     }
-    if (game.currentPlayer.isBot) {
-      if (paused) return;
-      await Future.delayed(const Duration(milliseconds: 1500));
-      if (mounted && !paused) _takeTurn();
+    if (game.currentPlayer.isBot && !paused) {
+      _takeTurn();
     }
   }
 
@@ -177,39 +293,37 @@ class _GameScreenState extends State<GameScreen> {
     }
   }
 
-  void _discount() {
-    if (game.discount()) {
-      setState(() => message = 'Giảm giá! Thẻ cuối trên sạp được hạ một bậc.');
-    }
-  }
-
   void _endGame() {
     final me = game.players.first;
-    final won = game.winners.contains(me);
-    final lost = game.losers.contains(me);
-    _sfx.play(AssetSource(lost ? 'sounds/lose.wav' : 'sounds/win.wav'));
+    if (game.winners.contains(me)) {
+      _sfx.play(AssetSource('sounds/applause.wav'));
+    }
+    _showResult();
+  }
+
+  void _showResult() {
     showDialog(
       context: context,
-      barrierDismissible: false,
       builder: (_) => AlertDialog(
-        title: Text(won
-            ? '🎉 Bạn thắng!'
-            : lost
-                ? 'Bạn thua rồi'
-                : 'Bạn không thua!'),
+        title: const Text('Điểm số cuối cùng'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Dưới ${game.loseThreshold} điểm là thua'),
-            const SizedBox(height: 8),
             for (final p in game.players)
-              Text(
-                  '${p.name}: ${p.score} điểm${game.losers.contains(p) ? ' (thua)' : ''}'),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Text('${p.name}: ${p.score} điểm',
+                    style: const TextStyle(fontSize: 16)),
+              ),
           ],
         ),
         actions: [
           TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Đóng'),
+          ),
+          FilledButton(
             onPressed: () {
               Navigator.pop(context);
               setState(_newGame);
@@ -221,13 +335,69 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
-  String _tilesText(Player p) {
-    final s = p.tiles.entries
+  String _tilesText(Map<Tile, int> m) {
+    final s = m.entries
         .where((e) => e.value > 0)
         .map((e) => '${e.value}× ${e.key.label}')
         .join(', ');
     return s.isEmpty ? 'Chưa có thẻ' : s;
   }
+
+  // Names shown on the table only (players' cards keep the old names).
+  static const Map<Tile, String> _bankNames = {
+    Tile.trangAnh: 'Trạng Nguyên',
+    Tile.trangEm: 'Bảng Nhãn',
+    Tile.tamHuong: 'Hội Nguyên',
+    Tile.tuTu: 'Tiến Sỹ',
+    Tile.nhiHuong: 'Cử Nhân',
+    Tile.nhatHuong: 'Tú Tài',
+  };
+
+  Widget _bank() => GridView.builder(
+        shrinkWrap: true,
+        clipBehavior: Clip.none,
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: Tile.values.length,
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 2,
+          mainAxisExtent: 36,
+          mainAxisSpacing: 6,
+          crossAxisSpacing: 6,
+        ),
+        itemBuilder: (_, i) {
+          final t = Tile.values[i];
+          final glow = glowing.contains(t);
+          // Giảm giá: Trạng Nguyên gets a slightly lighter background.
+          final tint = (t == Tile.trangAnh && shownDiscount > 0)
+              ? const Color(0x24FFFFFF)
+              : null;
+          return AnimatedContainer(
+            duration: const Duration(milliseconds: 250),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            decoration: BoxDecoration(
+              color: tint,
+              border: Border.all(
+                color: glow ? Colors.white : Colors.white24,
+                width: glow ? 3 : 1,
+              ),
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: glow
+                  ? const [
+                      BoxShadow(
+                          color: Colors.white70, blurRadius: 12, spreadRadius: 2)
+                    ]
+                  : const [],
+            ),
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                '${_bankNames[t]} (${t.points}đ) ×${shownStock[t]}',
+                style: const TextStyle(fontSize: 12),
+              ),
+            ),
+          );
+        },
+      );
 
   Widget _bowl() => Container(
         width: 270,
@@ -255,6 +425,44 @@ class _GameScreenState extends State<GameScreen> {
         ),
       );
 
+  Widget _messageBox() {
+    Color? stroke;
+    if (fx == MsgFx.pink || fx == MsgFx.bigPink) {
+      stroke = const Color(0xFFFF4081); // pink
+    }
+    if (fx == MsgFx.silver) stroke = const Color(0xFFC0C0C0); // silver
+    final base = TextStyle(
+      fontSize: fx == MsgFx.bigPink ? 23 : 16,
+      fontWeight: stroke == null ? FontWeight.normal : FontWeight.bold,
+    );
+    Text line(TextStyle style) => Text(
+          message,
+          textAlign: TextAlign.center,
+          maxLines: 3,
+          overflow: TextOverflow.ellipsis,
+          style: style,
+        );
+    return SizedBox(
+      height: 76,
+      child: Center(
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            if (stroke != null)
+              line(base.copyWith(
+                foreground: Paint()
+                  ..style = PaintingStyle.stroke
+                  ..strokeWidth = 5
+                  ..strokeJoin = StrokeJoin.round
+                  ..color = stroke,
+              )),
+            line(base.copyWith(color: Colors.white)),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final myTurn = !rolling && !game.gameOver && !game.currentPlayer.isBot;
@@ -265,89 +473,60 @@ class _GameScreenState extends State<GameScreen> {
           padding: const EdgeInsets.all(12),
           child: Column(
             children: [
-              GridView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: Tile.values.length,
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2,
-                  mainAxisExtent: 36,
-                  mainAxisSpacing: 6,
-                  crossAxisSpacing: 6,
-                ),
-                itemBuilder: (_, i) {
-                  final t = Tile.values[i];
-                  return Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.white24),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: FittedBox(
-                      fit: BoxFit.scaleDown,
-                      child: Text(
-                        '${t.label} (${t.points}đ) ×${game.bank.stock[t]}',
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                    ),
-                  );
-                },
-              ),
+              _bank(),
               const SizedBox(height: 12),
               _bowl(),
               const SizedBox(height: 12),
-              SizedBox(
-                height: 48,
-                child: Center(
-                  child: Text(
-                    message,
-                    textAlign: TextAlign.center,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 16),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
+              _messageBox(),
+              const SizedBox(height: 8),
               FilledButton(
-                onPressed: myTurn ? _takeTurn : null,
-                child: const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 40, vertical: 10),
-                  child: Text('Gieo', style: TextStyle(fontSize: 22)),
+                onPressed: game.gameOver
+                    ? () => setState(_newGame)
+                    : (myTurn ? _takeTurn : null),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 40, vertical: 10),
+                  child: Text(game.gameOver ? 'Chơi lại' : 'Gieo',
+                      style: const TextStyle(fontSize: 22)),
                 ),
               ),
               const SizedBox(height: 8),
               OutlinedButton.icon(
-                onPressed: game.gameOver ? null : _togglePause,
+                onPressed: game.gameOver ? _showResult : _togglePause,
                 style: OutlinedButton.styleFrom(
                   visualDensity: VisualDensity.compact,
                   textStyle: const TextStyle(fontSize: 13),
                 ),
-                icon: Icon(paused ? Icons.play_arrow : Icons.pause, size: 18),
-                label: Text(paused ? 'Tiếp tục' : 'Tạm dừng'),
-              ),
-              SizedBox(
-                height: 48,
-                child: Center(
-                  child: myTurn && game.canDiscount
-                      ? OutlinedButton(
-                          onPressed: _discount,
-                          child: const Text('Giảm giá thẻ cuối'),
-                        )
-                      : null,
+                icon: Icon(
+                  game.gameOver
+                      ? Icons.emoji_events
+                      : (paused ? Icons.play_arrow : Icons.pause),
+                  size: 18,
                 ),
+                label: Text(game.gameOver
+                    ? 'Xem kết quả'
+                    : (paused ? 'Tiếp tục' : 'Tạm dừng')),
               ),
-              const SizedBox(height: 12),
-              for (final p in game.players)
+              const SizedBox(height: 16),
+              for (var i = 0; i < game.players.length; i++)
                 Card(
-                  color: p == game.currentPlayer && !game.gameOver
+                  color: i == shownCurrent && !game.gameOver
                       ? Theme.of(context).colorScheme.primaryContainer
                       : null,
                   child: ListTile(
                     dense: true,
-                    title: Text(p.name),
-                    subtitle: Text(_tilesText(p)),
-                    trailing: Text('${p.score} điểm',
+                    title: Text(game.players[i].name),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (i == shownTrangIdx && shownTrangText.isNotEmpty)
+                          Text(shownTrangText,
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.bold)),
+                        Text(_tilesText(shownTiles[i])),
+                      ],
+                    ),
+                    trailing: Text('${shownScores[i]} điểm',
                         style: const TextStyle(fontWeight: FontWeight.bold)),
                   ),
                 ),

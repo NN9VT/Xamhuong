@@ -1,5 +1,4 @@
 // Xăm hường - game engine (pure Dart, no Flutter dependency).
-// Put this in lib/game/ so the UI and tests can both import it.
 
 import 'dart:math';
 
@@ -17,12 +16,29 @@ enum Tile {
   final String label;
 }
 
+/// Trạng Nguyên can be held as "trạng đỏ" (Tứ Hường, Ngũ Hường) or
+/// "trạng đen" (Ngũ Tử). Only the same colour can steal it, and only with
+/// a higher rank.
+enum TrangKind { red, black }
+
+class Trang {
+  final TrangKind kind;
+  final int rank;
+  final String label;
+  const Trang(this.kind, this.rank, this.label);
+
+  /// Ngũ Hường (rank 100+) can steal from red and black alike.
+  bool get beatsAnyColor => rank >= 100;
+}
+
 class RollResult {
   final List<int> dice;
   final List<String> names; // combo names to show in the UI
   final List<Tile> tiles; // tiles earned (before stock check)
   final bool winAllRemaining; // Lục Phú
   final bool winEverything; // Lục Phú Hường
+  final Trang? trang; // set when the roll gives a Trạng Nguyên
+  final bool stealsTrangEm; // Ngũ Hường also takes Bảng Nhãn from players
 
   const RollResult(
     this.dice,
@@ -30,6 +46,8 @@ class RollResult {
     this.tiles, {
     this.winAllRemaining = false,
     this.winEverything = false,
+    this.trang,
+    this.stealsTrangEm = false,
   });
 
   int get points => tiles.fold(0, (s, t) => s + t.points);
@@ -51,8 +69,10 @@ RollResult evaluateRoll(List<int> dice) {
   }
   final fours = c[4];
 
-  RollResult result(List<String> names, List<Tile> tiles) =>
-      RollResult(dice, names, tiles);
+  RollResult result(List<String> names, List<Tile> tiles,
+          {Trang? trang, bool stealsTrangEm = false}) =>
+      RollResult(dice, names, tiles,
+          trang: trang, stealsTrangEm: stealsTrangEm);
 
   // Instant wins
   if (fours == 6) {
@@ -64,13 +84,39 @@ RollResult evaluateRoll(List<int> dice) {
     }
   }
 
-  // Many red 4s
+  // Ngũ Hường: last die is the "tuổi", a 1 is Đại Ấn (highest)
   if (fours == 5) {
-    return result(['Ngũ Hường'], [Tile.trangAnh, Tile.trangEm, Tile.trangEm]);
+    final other = dice.firstWhere((d) => d != 4);
+    final daiAn = other == 1;
+    final name = daiAn ? 'Ngũ Hường Đại Ấn' : 'Ngũ Hường $other tuổi';
+    return result(
+      [name],
+      [Tile.trangAnh, Tile.trangEm, Tile.trangEm],
+      trang: Trang(TrangKind.red, 100 + (daiAn ? 7 : other), name),
+      stealsTrangEm: true,
+    );
   }
+
+  // Tứ Hường: Cáp Chính (2,2) > Cáp Xiên (1,3) > plain, by "tuổi" = sum
   if (fours == 4) {
-    return result(['Tứ Hường'], [Tile.trangAnh]);
+    final rest = dice.where((d) => d != 4).toList();
+    final sum = rest[0] + rest[1];
+    String name;
+    int rank;
+    if (rest[0] == 2 && rest[1] == 2) {
+      name = 'Tứ Hường Cáp Chính';
+      rank = 30;
+    } else if (sum == 4) {
+      name = 'Tứ Hường Cáp Xiên';
+      rank = 20;
+    } else {
+      name = 'Tứ Hường $sum tuổi';
+      rank = sum;
+    }
+    return result([name], [Tile.trangAnh],
+        trang: Trang(TrangKind.red, rank, name));
   }
+
   if (fours == 3) {
     if (dice.where((d) => d != 4).toSet().length == 1) {
       return result(['Tam Hường Phân Song'], [Tile.tamHuong, Tile.trangEm]);
@@ -82,16 +128,18 @@ RollResult evaluateRoll(List<int> dice) {
   for (var f = 1; f <= 6; f++) {
     if (f == 4) continue;
     if (c[f] == 5) {
-      return result(['Ngũ Tử'], [Tile.trangAnh]);
+      final other = dice.firstWhere((d) => d != f);
+      final daiAn = other == 4;
+      final name = daiAn ? 'Ngũ Tử Đại Ấn' : 'Ngũ Tử $other tuổi';
+      return result([name], [Tile.trangAnh],
+          trang: Trang(TrangKind.black, daiAn ? 7 : other, name));
     }
     if (c[f] == 4) {
       final rest = dice.where((d) => d != f).toList();
-      if (rest[0] + rest[1] == f) {
-        // Tứ Tự Cáp replaces the Tứ Tự tile and gives nothing else.
-        if (rest[0] == rest[1]) {
-          return result(['Tứ Tự Cáp Chính'], [Tile.trangEm, Tile.tamHuong]);
-        }
-        return result(['Tứ Tự Cáp Xiên'], [Tile.trangEm]);
+      final sum = rest[0] + rest[1];
+      // Tứ Tự Cáp: the other two dice add up to the face (plus 1,1,1,1,5,6).
+      if (sum == f || (f == 1 && sum == 11)) {
+        return result(['Tứ Tự Cáp'], [Tile.trangEm]);
       }
       return result(
         ['Tứ Tự', if (fours == 1) 'Nhất Hường', if (fours == 2) 'Nhị Hường'],
@@ -137,23 +185,10 @@ class Bank {
 
   bool get isEmpty => totalPoints == 0;
 
-  /// Exactly one tile left, worth Trạng em or more (Giảm giá can apply).
-  bool get onlyHighTileLeft {
-    final left = stock.entries.where((e) => e.value > 0).toList();
-    return left.length == 1 &&
-        left.first.value == 1 &&
-        left.first.key.points >= Tile.trangEm.points;
-  }
-
-  /// "Giảm giá": call after all players failed for 3 rounds.
-  /// The last tile drops one tier (Trạng em -> Tam Hường).
-  bool discount() {
-    if (!onlyHighTileLeft) return false;
-    final t = stock.entries.firstWhere((e) => e.value > 0).key;
-    stock[t] = 0;
-    stock[Tile.values[t.index + 1]] = 1;
-    return true;
-  }
+  /// Exactly one tile left and it is Trạng Nguyên (Giảm giá can start).
+  bool get onlyTrangAnhLeft =>
+      stock[Tile.trangAnh] == 1 &&
+      Tile.values.every((t) => t == Tile.trangAnh || stock[t] == 0);
 
   /// Everything left on the table (Lục Phú, or when stock can't cover a win).
   Award takeAll() {
@@ -169,7 +204,7 @@ class Bank {
   /// ones of equal points. If the stock can't cover it, take all and end.
   Award award(List<Tile> wanted) {
     final needed = wanted.fold(0, (s, t) => s + t.points);
-    if (totalPoints <= needed) return takeAll();
+    if (needed > 0 && totalPoints <= needed) return takeAll();
 
     final got = <Tile, int>{};
     void take(Tile t) {

@@ -1,4 +1,4 @@
-// Xăm hường - game controller (turns, bots, end of game).
+// Xăm hường - game controller (turns, stealing, end of game).
 // Depends on xam_huong_engine.dart. Pure Dart, no Flutter.
 
 import 'dart:math';
@@ -9,9 +9,13 @@ class Player {
   final bool isBot;
   final Map<Tile, int> tiles = {for (final t in Tile.values) t: 0};
 
+  /// Set by Lục Phú Hường (382); otherwise the score comes from the tiles.
+  int? fixedScore;
+
   Player(this.name, {this.isBot = false});
 
   int get score =>
+      fixedScore ??
       tiles.entries.fold(0, (s, e) => s + e.key.points * e.value);
 
   void add(Map<Tile, int> got) {
@@ -31,9 +35,10 @@ class TurnOutcome {
   final Player player;
   final RollResult roll;
   final Award award;
-  final bool tookEverythingFromOthers; // Lục Phú Hường
+  final String? note; // steal / Giảm giá info for the UI
+  final int stolenPoints;
   const TurnOutcome(this.player, this.roll, this.award,
-      {this.tookEverythingFromOthers = false});
+      {this.note, this.stolenPoints = 0});
 }
 
 class XamHuongGame {
@@ -44,70 +49,131 @@ class XamHuongGame {
   int current = 0;
   bool gameOver = false;
 
-  /// Turns in a row where nobody took a tile while only a high tile is left.
+  /// Who holds Trạng Nguyên and how (colour, rank), for "cướp Trạng".
+  Player? trangHolder;
+  Trang? trangInfo;
+
+  /// Automatic Giảm giá, only when Trạng Nguyên is the last tile on the table:
+  /// 0 = off, 1 = Tam Hường Phân Song can take it, 2 = any Bảng Nhãn result.
+  int discountStage = 0;
   int _failedTurns = 0;
 
   XamHuongGame(this.players, {Random? rng}) : _rng = rng ?? Random() {
-    assert(players.length >= 2 && players.length <= 12);
+    assert(players.length >= 2 && players.length <= 8);
   }
 
   Player get currentPlayer => players[current];
-
-  int get failedRounds => _failedTurns ~/ players.length;
-
-  /// Giảm giá is available after all players failed for 3 rounds.
-  bool get canDiscount => bank.onlyHighTileLeft && failedRounds >= 3;
-
-  bool discount() {
-    if (!canDiscount) return false;
-    _failedTurns = 0;
-    return bank.discount();
-  }
-
-  /// Players below this many points lose (192 / number of players).
-  int get loseThreshold => 192 ~/ players.length;
-
-  List<Player> get losers =>
-      players.where((p) => p.score < loseThreshold).toList();
 
   List<Player> get winners {
     final best = players.map((p) => p.score).reduce(max);
     return players.where((p) => p.score == best).toList();
   }
 
-  /// The current player rolls. Bots also decide on Giảm giá automatically.
+  /// The current player rolls and the result is applied.
   TurnOutcome playTurn() {
     assert(!gameOver);
     final p = currentPlayer;
-    if (p.isBot && canDiscount) discount();
-
+    final wasOnlyTrang = bank.onlyTrangAnhLeft;
     final roll = evaluateRoll(rollDice(_rng));
     var award = const Award({}, false);
-    var tookFromOthers = false;
+    final notes = <String>[];
+    var stolenPoints = 0;
 
-    if (roll.winEverything) {
+    if (roll.winEverything || roll.winAllRemaining) {
+      // Lục Phú (Hường): take every tile, everyone else drops to 0.
       for (final other in players) {
         if (other != p) p.add(other.clear());
       }
       award = bank.takeAll();
       p.add(award.tiles);
-      tookFromOthers = true;
-    } else if (roll.winAllRemaining) {
-      award = bank.takeAll();
-      p.add(award.tiles);
+      if (roll.winEverything) p.fixedScore = 382;
+      trangHolder = p;
+      trangInfo = null;
+      notes.add('Lấy hết thẻ của mọi người chơi khác!');
     } else if (roll.tiles.isNotEmpty) {
-      award = bank.award(roll.tiles);
+      final wanted = List<Tile>.of(roll.tiles);
+
+      // Giảm giá: the last Trạng Nguyên gets easier to take.
+      if (wasOnlyTrang) {
+        if (discountStage >= 1 && roll.names.contains('Tam Hường Phân Song')) {
+          wanted
+            ..clear()
+            ..add(Tile.trangAnh);
+        }
+        if (discountStage >= 2 && wanted.contains(Tile.trangEm)) {
+          wanted
+            ..clear()
+            ..add(Tile.trangAnh);
+        }
+      }
+
+      // Cướp Trạng: same colour only, higher rank only.
+      final tr = roll.trang;
+      final holder = trangHolder;
+      final info = trangInfo;
+      if (tr != null &&
+          wanted.contains(Tile.trangAnh) &&
+          bank.stock[Tile.trangAnh] == 0 &&
+          holder != null &&
+          holder != p &&
+          info != null &&
+          holder.tiles[Tile.trangAnh]! > 0 &&
+          (info.kind == tr.kind || tr.beatsAnyColor) &&
+          tr.rank > info.rank) {
+        holder.tiles[Tile.trangAnh] = holder.tiles[Tile.trangAnh]! - 1;
+        p.tiles[Tile.trangAnh] = p.tiles[Tile.trangAnh]! + 1;
+        trangHolder = p;
+        trangInfo = tr;
+        wanted.remove(Tile.trangAnh);
+        stolenPoints += Tile.trangAnh.points;
+        notes.add('Cướp Trạng của ${holder.name}!');
+      }
+
+      // Ngũ Hường also takes missing Bảng Nhãn from other players.
+      if (roll.stealsTrangEm) {
+        var missing = wanted.where((t) => t == Tile.trangEm).length -
+            bank.stock[Tile.trangEm]!;
+        for (final other in players) {
+          while (missing > 0 && other != p && other.tiles[Tile.trangEm]! > 0) {
+            other.tiles[Tile.trangEm] = other.tiles[Tile.trangEm]! - 1;
+            p.tiles[Tile.trangEm] = p.tiles[Tile.trangEm]! + 1;
+            wanted.remove(Tile.trangEm);
+            stolenPoints += Tile.trangEm.points;
+            notes.add('Cướp Bảng Nhãn của ${other.name}!');
+            missing--;
+          }
+        }
+      }
+
+      award = bank.award(wanted);
       p.add(award.tiles);
+
+      if ((award.tiles[Tile.trangAnh] ?? 0) > 0) {
+        trangHolder = p;
+        trangInfo = tr; // null when taken through Giảm giá
+      }
     }
 
-    if (bank.onlyHighTileLeft && award.tiles.isEmpty) {
+    // Automatic Giảm giá: count turns where nobody took the last tile.
+    if (wasOnlyTrang && bank.onlyTrangAnhLeft) {
       _failedTurns++;
-    } else {
+      if (_failedTurns >= 3 * players.length && discountStage < 2) {
+        discountStage++;
+        _failedTurns = 0;
+        notes.add('Giảm giá: Trạng Nguyên dễ lấy hơn!');
+      }
+    } else if (!bank.onlyTrangAnhLeft) {
       _failedTurns = 0;
     }
 
     if (award.gameOver || bank.isEmpty) gameOver = true;
     current = (current + 1) % players.length;
-    return TurnOutcome(p, roll, award, tookEverythingFromOthers: tookFromOthers);
+    return TurnOutcome(
+      p,
+      roll,
+      award,
+      note: notes.isEmpty ? null : notes.join('\n'),
+      stolenPoints: stolenPoints,
+    );
   }
 }
