@@ -1,8 +1,15 @@
-name: Build APK
+name: Build APK and Web
 on:
   push:
     branches: [main]
   workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -15,7 +22,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
-      - run: flutter create --platforms=android --project-name xam_huong .
+      - run: flutter create --platforms=android,web --project-name xam_huong .
       - run: |
           mkdir -p lib assets/sounds assets/icon
           mv -f main.dart xam_huong_engine.dart xam_huong_game.dart lib/
@@ -23,10 +30,25 @@ jobs:
           mv -f icon.png icon_fg.png assets/icon/
           mv -f app_pubspec.yaml pubspec.yaml
           sed -i 's/android:label="[^"]*"/android:label="Xăm Hường"/' android/app/src/main/AndroidManifest.xml
+          sed -i 's/xam_huong/Xăm Hường/g' web/manifest.json
+          sed -i 's#<title>xam_huong</title>#<title>Xăm Hường</title>#; s#content="xam_huong"#content="Xăm Hường"#' web/index.html
       - run: flutter pub get
       - run: dart run flutter_launcher_icons
       - run: flutter build apk --release
       - uses: actions/upload-artifact@v4
         with:
           name: xam-huong-apk
-          path: build/app/outputs/flutter-apk/app-release.apk 
+          path: build/app/outputs/flutter-apk/app-release.apk
+      - run: flutter build web --release --base-href "/${{ github.event.repository.name }}/"
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
